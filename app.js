@@ -357,7 +357,7 @@ let photoQueue = []; // { file, url }
 
 async function shrink(file) {
   const img = await createImageBitmap(file);
-  const s = Math.min(1, 1280 / Math.max(img.width, img.height));
+  const s = Math.min(1, 1568 / Math.max(img.width, img.height));
   const cv = document.createElement("canvas");
   cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
   cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
@@ -403,7 +403,7 @@ async function askClaude(kind, images) {
       model: "claude-opus-5-5",
       max_tokens: 16000,
       fallbacks: "default",
-      output_config: { effort: "low", format: { type: "json_schema", schema: task.schema } },
+      output_config: { effort: "high", format: { type: "json_schema", schema: task.schema } },
       messages: [{ role: "user", content: [
         ...images.map(data => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data } })),
         { type: "text", text: task.prompt(images.length) },
