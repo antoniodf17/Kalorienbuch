@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kalorienbuch</title>
+<meta name="description" content="Kalorien, Makros und Wasser tracken, mit Barcode-Scanner.">
+<meta name="theme-color" content="#F3F6F2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F1512" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Kalorienbuch">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <h1>Kalorienbuch</h1>
+    <button class="iconbtn" id="btn-goal" type="button">Ziele</button>
+  </header>
+
+  <div class="datebar">
+    <button id="prev" type="button" aria-label="Vorheriger Tag">‹</button>
+    <div class="label"><strong id="day-title">Heute</strong><span id="day-sub"></span></div>
+    <button id="next" type="button" aria-label="Nächster Tag">›</button>
+  </div>
+
+  <section class="summary" aria-label="Tagesübersicht">
+    <div class="ringrow">
+      <div class="side"><b class="num" id="eaten">0</b><small>Gegessen</small></div>
+      <div class="ring">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--surface-2)" stroke-width="11"></circle>
+          <circle id="ring-arc" cx="60" cy="60" r="52" fill="none" stroke="var(--accent)" stroke-width="11" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" style="transition: stroke-dashoffset .4s"></circle>
+        </svg>
+        <div class="center" id="ring-center"><b class="num" id="left">2000</b><small id="left-label">kcal übrig</small></div>
+      </div>
+      <div class="side"><b class="num" id="goal-kcal">2000</b><small>Ziel</small></div>
+    </div>
+    <div class="macros">
+      <div class="macro"><small>Kohlenhydrate</small><div class="bar"><i id="bar-c" style="background:var(--carb);width:0"></i></div><span class="num" id="txt-c">0 / 0 g</span></div>
+      <div class="macro"><small>Eiweiß</small><div class="bar"><i id="bar-p" style="background:var(--protein);width:0"></i></div><span class="num" id="txt-p">0 / 0 g</span></div>
+      <div class="macro"><small>Fett</small><div class="bar"><i id="bar-f" style="background:var(--fat);width:0"></i></div><span class="num" id="txt-f">0 / 0 g</span></div>
+    </div>
+  </section>
+
+  <section class="water" aria-label="Wasser">
+    <div class="info"><b>Wasser</b><span class="num" id="water-txt">0 von 2,0 l</span></div>
+    <div class="glasses" id="glasses"></div>
+  </section>
+
+  <div id="meals" style="display:flex;flex-direction:column;gap:12px"></div>
+
+  <p class="note" id="store-note">Deine Einträge werden gespeichert.</p>
+</div>
+
+<div class="sheet-bg" id="sheet-bg" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" id="sheet"></div>
+</div>
+
+<script src="vendor/html5-qrcode.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
