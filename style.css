@@ -159,3 +159,4 @@ label.f { display: flex; flex-direction: column; gap: 5px; font-size: 13px; colo
 
 .entry .edit { font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 4px 9px; flex: none; }
 .searchbar { position: sticky; top: -18px; z-index: 2; background: var(--bg); padding-block: 8px; margin-block: -8px; }
+.linkbtn { border: none; background: none; padding: 0; color: var(--accent); font-weight: 600; text-decoration: underline; font-size: inherit; }

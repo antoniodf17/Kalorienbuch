@@ -281,7 +281,30 @@ function offToFood(p) {
     portions: serving > 0 ? [["1 Portion", Math.round(serving)]] : [], off: true };
 }
 
-async function offSearch(term, signal, page = 1) {
+// Open Food Facts erlaubt nur ca. 10 Suchen pro Minute: Ergebnisse merken und bei Ablehnung kurz warten und neu versuchen
+const offCache = new Map(Object.entries(local.get("offcache") || {}));
+const sleep = (ms, signal) => new Promise((res, rej) => {
+  const t = setTimeout(res, ms);
+  signal && signal.addEventListener("abort", () => { clearTimeout(t); rej(new DOMException("abort", "AbortError")); });
+});
+async function offSearch(term, signal, page = 1, onWait) {
+  const key = term.toLowerCase().replace(/\s+/g, " ") + "|" + page;
+  const hit = offCache.get(key);
+  if (hit && Date.now() - hit.at < 7 * 864e5) return hit.data;
+  let err;
+  for (const wait of [0, 3000, 8000]) {
+    if (wait) { onWait && onWait(); await sleep(wait, signal); }
+    try {
+      const data = await offSearchOnce(term, signal, page);
+      offCache.set(key, { at: Date.now(), data });
+      const keep = [...offCache.entries()].slice(-40);
+      local.set("offcache", Object.fromEntries(keep));
+      return data;
+    } catch (e) { if (e.name === "AbortError") throw e; err = e; }
+  }
+  throw err;
+}
+async function offSearchOnce(term, signal, page) {
   const url = "https://world.openfoodfacts.org/cgi/search.pl?action=process&json=1&search_simple=1&sort_by=unique_scans_n&lc=de&cc=de&page_size=30&page=" + page + "&search_terms=" +
     encodeURIComponent(term) + "&fields=" + OFF_FIELDS;
   const r = await fetch(url, { signal });
@@ -432,7 +455,7 @@ function drawSearch(meal) {
     offTimer = setTimeout(async () => {
       ctl = new AbortController();
       try {
-        const { foods: found, total } = await offSearch(raw, ctl.signal);
+        const { foods: found, total } = await offSearch(raw, ctl.signal, 1, () => { offStatus.textContent = "Open Food Facts ist gerade ausgelastet, ich versuche es gleich noch mal …"; });
         const seen = new Set(hits.map(h => h.code || h.name));
         offHits = found.filter(f => !seen.has(f.code) && !seen.has(f.name));
         offTotal = total; more.hidden = total <= 30;
@@ -441,9 +464,10 @@ function drawSearch(meal) {
         resOff.innerHTML = offHits.map((f, i) => row(f, "data-o", i)).join("");
       } catch (e) {
         if (e.name === "AbortError") return;
-        offStatus.textContent = "Keine Verbindung zu Open Food Facts. Die gespeicherten Lebensmittel oben gehen trotzdem.";
+        offStatus.innerHTML = `Open Food Facts antwortet gerade nicht. Das passiert, wenn viele gleichzeitig suchen. <button class="linkbtn" type="button" id="off-retry">Nochmal versuchen</button> oder scan den Barcode.`;
+        $("off-retry").onclick = () => { lastTerm = null; list(); };
       }
-    }, 450);
+    }, 800);
   };
   const box = $("picked"), more = $("more");
   let offPage = 1, offTotal = 0;
