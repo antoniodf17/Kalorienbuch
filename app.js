@@ -168,13 +168,21 @@ $("next").onclick = () => { current.setDate(current.getDate() + 1); day = emptyD
 
 // ---- Dialoge ----
 const bg = $("sheet-bg"), sheet = $("sheet");
-function closeSheet() { stopScanner(); bg.hidden = true; sheet.innerHTML = ""; }
+// Bei offener Tastatur (iPhone) das Fenster auf den sichtbaren Bereich begrenzen, damit nichts hinter der Tastatur verschwindet
+function fitSheet() {
+  const vv = window.visualViewport; if (!vv || bg.hidden) return;
+  bg.style.top = vv.offsetTop + "px";
+  bg.style.height = vv.height + "px";
+  bg.style.bottom = "auto";
+}
+if (window.visualViewport) { visualViewport.addEventListener("resize", fitSheet); visualViewport.addEventListener("scroll", fitSheet); }
+function closeSheet() { stopScanner(); bg.hidden = true; sheet.innerHTML = ""; bg.style.top = bg.style.height = bg.style.bottom = ""; }
 bg.addEventListener("click", e => { if (e.target === bg) closeSheet(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !bg.hidden) closeSheet(); });
 
 function openAdd(meal) {
   let tab = "suche";
-  bg.hidden = false;
+  bg.hidden = false; fitSheet();
   const draw = () => {
     stopScanner();
     sheet.innerHTML = `
@@ -203,7 +211,7 @@ function perOf(e) {
 function openEdit(meal, i) {
   const e = day.meals[meal.id][i]; if (!e) return;
   const per = perOf(e), u = unitOf(e);
-  bg.hidden = false;
+  bg.hidden = false; fitSheet();
   sheet.innerHTML = `
     <div class="sheet-head"><h3 id="sheet-title">Eintrag ändern</h3><button class="iconbtn" type="button" id="x">Abbrechen</button></div>
     <div class="picked">
@@ -397,7 +405,7 @@ function allFoods() { return [...(settings.custom || []).map(f => ({ ...f, mine:
 function drawSearch(meal) {
   const body = $("tabbody");
   body.innerHTML = `
-    <input id="q" type="search" placeholder="z. B. Skyr, Vollmilch, ESN Whey …" autocomplete="off" enterkeyhint="search">
+    <div class="searchbar"><input id="q" type="search" placeholder="z. B. Skyr, Vollmilch, ESN Whey …" autocomplete="off" enterkeyhint="search"></div>
     <div id="picked"></div>
     <ul class="results" id="res"></ul>
     <p class="hint" id="off-status" hidden></p>
@@ -488,7 +496,7 @@ function drawCustom(meal, done) {
 }
 
 function openGoals() {
-  bg.hidden = false;
+  bg.hidden = false; fitSheet();
   sheet.innerHTML = `
     <div class="sheet-head"><h3 id="sheet-title">Deine Ziele</h3><button class="iconbtn" type="button" id="x">Schließen</button></div>
     <div class="grid2">

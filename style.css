@@ -102,7 +102,7 @@ header.top h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
 
 /* Dialog */
 .sheet-bg { position: fixed; inset: 0; background: rgba(10,16,12,.45); display: flex; align-items: flex-end; justify-content: center; z-index: 20; }
-.sheet { background: var(--bg); width: 100%; max-width: 560px; max-height: 88vh; max-height: 88dvh; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; overflow-y: auto; border-radius: 18px 18px 0 0;
+.sheet { background: var(--bg); width: 100%; max-width: 560px; max-height: 88%; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; overflow-y: auto; border-radius: 18px 18px 0 0;
   padding-block: 18px max(20px, env(safe-area-inset-bottom, 0px));
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   display: flex; flex-direction: column; gap: 14px; }
@@ -158,3 +158,4 @@ label.f { display: flex; flex-direction: column; gap: 5px; font-size: 13px; colo
 .filebtn { display: flex; align-items: center; justify-content: center; cursor: pointer; text-align: center; }
 
 .entry .edit { font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 4px 9px; flex: none; }
+.searchbar { position: sticky; top: -18px; z-index: 2; background: var(--bg); padding-block: 8px; margin-block: -8px; }
