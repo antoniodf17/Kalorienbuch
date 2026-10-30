@@ -171,3 +171,5 @@ label.f { display: flex; flex-direction: column; gap: 5px; font-size: 13px; colo
 .creatine .streak { font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 4px 9px; }
 .creatine .streak:empty { display: none; }
 .glasses { display: grid; grid-template-columns: repeat(7, 22px); gap: 6px 8px; }
+.steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.linkout { display: block; text-align: center; color: var(--fg); text-decoration: none; }

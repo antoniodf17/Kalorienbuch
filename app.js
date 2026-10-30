@@ -206,6 +206,7 @@ function openAdd(meal) {
     sheet.innerHTML = `
       <div class="sheet-head"><h3 id="sheet-title">${meal.name}</h3><button class="iconbtn" type="button" id="x">Fertig</button></div>
       <div class="tabs" role="tablist">
+        <button role="tab" type="button" data-t="foto" aria-selected="${tab === "foto"}">Foto</button>
         <button role="tab" type="button" data-t="scan" aria-selected="${tab === "scan"}">Barcode</button>
         <button role="tab" type="button" data-t="suche" aria-selected="${tab === "suche"}">Suchen</button>
         <button role="tab" type="button" data-t="eigen" aria-selected="${tab === "eigen"}">Eigenes</button>
@@ -213,7 +214,8 @@ function openAdd(meal) {
       <div id="tabbody" style="display:flex;flex-direction:column;gap:12px"></div>`;
     $("x").onclick = closeSheet;
     sheet.querySelectorAll("[data-t]").forEach(b => b.onclick = async () => { await stopScanner(); tab = b.dataset.t; draw(); });
-    if (tab === "scan") drawScan(meal);
+    if (tab === "foto") drawPhoto(meal);
+    else if (tab === "scan") drawScan(meal);
     else if (tab === "suche") drawSearch(meal);
     else drawCustom(meal, () => { tab = "suche"; draw(); });
   };
@@ -347,6 +349,206 @@ function remember(food) {
   const { off, mine, ...keep } = food;
   settings.custom = [keep, ...list].slice(0, 500);
   save("settings", settings);
+}
+
+// ---- Foto-Scan: Fotos gehen direkt vom Handy an Claude (eigener API-Schlüssel, nur auf diesem Gerät gespeichert) ----
+const PHOTO_MAX = 6;
+let photoQueue = []; // { file, url }
+
+async function shrink(file) {
+  const img = await createImageBitmap(file);
+  const s = Math.min(1, 1280 / Math.max(img.width, img.height));
+  const cv = document.createElement("canvas");
+  cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
+  cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+  return cv.toDataURL("image/jpeg", 0.85).split(",")[1];
+}
+
+const NUM = { type: "number" };
+const PHOTO_TASKS = {
+  meal: {
+    prompt: n => `Du bist Ernährungsberater. Du bekommst ${n} Foto${n > 1 ? "s" : ""} von Essen oder Getränken, die zusammen eine Mahlzeit ergeben.
+Die Fotos können dasselbe Gericht aus verschiedenen Blickwinkeln zeigen oder verschiedene Teile der Mahlzeit. Zähle dasselbe Essen nicht doppelt.
+Erkenne jede Komponente, schätze die Menge in Gramm (bei Getränken in ml, dann unit "ml") anhand von Teller, Besteck und Verpackungen und berechne kcal, Kohlenhydrate (c), Eiweiß (p) und Fett (f) in Gramm für genau diese Menge.
+Namen auf Deutsch. "note" ist ein kurzer Hinweis auf Deutsch, z. B. was unsicher ist. Wenn kein Essen zu sehen ist, gib eine leere Liste zurück.`,
+    schema: { type: "object", additionalProperties: false, required: ["items", "note"], properties: {
+      note: { type: "string" },
+      items: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "grams", "unit", "kcal", "c", "p", "f"],
+        properties: { name: { type: "string" }, grams: NUM, unit: { type: "string", enum: ["g", "ml"] }, kcal: NUM, c: NUM, p: NUM, f: NUM } } } } },
+  },
+  pack: {
+    prompt: n => `Du bekommst ${n} Foto${n > 1 ? "s" : ""} von Lebensmittelverpackungen oder Nährwert-Etiketten.
+Mehrere Fotos können dasselbe Produkt zeigen (z. B. Vorderseite und Nährwerttabelle) oder verschiedene Produkte. Fasse Fotos desselben Produkts zu einem Eintrag zusammen.
+Lies für jedes Produkt die Nährwerte je 100 g (bei Getränken je 100 ml, dann unit "ml") von der Tabelle ab: kcal, Kohlenhydrate (c), Eiweiß (p), Fett (f). Ist keine Tabelle lesbar, erkenne das Produkt und nutze typische Werte dafür und setze fromLabel auf false.
+"portion" ist die angegebene Portionsgröße in g bzw. ml, oder 0 wenn keine angegeben ist. Name mit Marke, auf Deutsch. "note" ist ein kurzer Hinweis auf Deutsch.`,
+    schema: { type: "object", additionalProperties: false, required: ["products", "note"], properties: {
+      note: { type: "string" },
+      products: { type: "array", items: { type: "object", additionalProperties: false, required: ["name", "unit", "kcal", "c", "p", "f", "portion", "fromLabel"],
+        properties: { name: { type: "string" }, unit: { type: "string", enum: ["g", "ml"] }, kcal: NUM, c: NUM, p: NUM, f: NUM, portion: NUM, fromLabel: { type: "boolean" } } } } } },
+  },
+};
+
+async function askClaude(kind, images) {
+  const task = PHOTO_TASKS[kind];
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": settings.apiKey,
+      "anthropic-version": "2026-10-21",
+      "anthropic-beta": "server-side-fallback-2026-07-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: "claude-opus-5-5",
+      max_tokens: 16000,
+      fallbacks: "default",
+      output_config: { effort: "low", format: { type: "json_schema", schema: task.schema } },
+      messages: [{ role: "user", content: [
+        ...images.map(data => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data } })),
+        { type: "text", text: task.prompt(images.length) },
+      ] }],
+    }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(body.error?.message || "HTTP " + r.status); e.status = r.status; throw e; }
+  if (body.stop_reason === "refusal") throw Object.assign(new Error("refusal"), { status: "refusal" });
+  const text = (body.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  return JSON.parse(text);
+}
+
+function drawPhoto(meal, openGoalsTab) {
+  const body = $("tabbody");
+  if (!settings.apiKey) {
+    body.innerHTML = `
+      <p>Für den Foto-Scan schickt die App deine Fotos an Claude. Dafür brauchst du einmalig einen eigenen API-Schlüssel.</p>
+      <ol class="steps">
+        <li>Auf <b>console.anthropic.com</b> anmelden.</li>
+        <li>Unter „Billing“ ein paar Euro Guthaben aufladen. Ein Foto kostet ungefähr 1 bis 3 Cent.</li>
+        <li>Unter „API Keys“ einen Schlüssel erstellen und kopieren.</li>
+        <li>Hier unter „Ziele“ ganz unten einfügen.</li>
+      </ol>
+      <a class="ghost linkout" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com öffnen</a>
+      <button class="primary" type="button" id="to-goals">Schlüssel eintragen</button>`;
+    $("to-goals").onclick = () => { closeSheet(); openGoals(); };
+    return;
+  }
+  body.innerHTML = `
+    <div class="tabs" role="tablist" aria-label="Was willst du fotografieren?">
+      <button role="tab" type="button" data-k="meal" aria-selected="true">Mahlzeit</button>
+      <button role="tab" type="button" data-k="pack" aria-selected="false">Packungen</button>
+    </div>
+    <p class="hint" id="photo-hint"></p>
+    <div class="grid2">
+      <label class="scanbtn" for="ph-cam"><b>Foto machen</b><span>Öffnet die Kamera</span>
+        <input id="ph-cam" type="file" accept="image/*" capture="environment" hidden></label>
+      <label class="scanbtn" for="ph-lib"><b>Aus Galerie</b><span>Mehrere auf einmal</span>
+        <input id="ph-lib" type="file" accept="image/*" multiple hidden></label>
+    </div>
+    <div class="thumbs" id="thumbs"></div>
+    <button class="primary" type="button" id="ph-go" hidden></button>
+    <div id="ph-out" style="display:flex;flex-direction:column;gap:10px"></div>`;
+  let kind = "meal";
+  const hint = () => {
+    $("photo-hint").textContent = kind === "meal"
+      ? `Bis zu ${PHOTO_MAX} Fotos von einer Mahlzeit, z. B. Teller von oben und von der Seite. Claude schätzt Mengen und Nährwerte.`
+      : `Bis zu ${PHOTO_MAX} Fotos von Packungen. Am besten die Nährwerttabelle fotografieren.`;
+  };
+  body.querySelectorAll("[data-k]").forEach(b => b.onclick = () => {
+    kind = b.dataset.k;
+    body.querySelectorAll("[data-k]").forEach(x => x.setAttribute("aria-selected", x === b));
+    hint();
+  });
+  const drawQueue = () => {
+    $("thumbs").innerHTML = photoQueue.map((q, i) => `<div class="thumb"><img src="${q.url}" alt="Foto ${i + 1}">
+      <button type="button" data-rm="${i}" aria-label="Foto ${i + 1} entfernen">×</button></div>`).join("");
+    $("thumbs").querySelectorAll("[data-rm]").forEach(b => b.onclick = () => {
+      URL.revokeObjectURL(photoQueue[+b.dataset.rm].url); photoQueue.splice(+b.dataset.rm, 1); drawQueue();
+    });
+    const go = $("ph-go");
+    go.hidden = !photoQueue.length;
+    go.textContent = `${photoQueue.length} ${photoQueue.length === 1 ? "Foto" : "Fotos"} auswerten`;
+    go.onclick = () => runPhoto(meal, kind);
+  };
+  const add = input => {
+    const files = [...(input.files || [])]; input.value = "";
+    let skipped = 0;
+    for (const file of files) { if (photoQueue.length >= PHOTO_MAX) { skipped++; continue; } photoQueue.push({ file, url: URL.createObjectURL(file) }); }
+    $("ph-out").innerHTML = skipped ? `<p class="hint">Maximal ${PHOTO_MAX} Fotos pro Scan, ${skipped} weggelassen.</p>` : "";
+    drawQueue();
+  };
+  $("ph-cam").onchange = e => add(e.target);
+  $("ph-lib").onchange = e => add(e.target);
+  hint(); drawQueue();
+}
+
+async function runPhoto(meal, kind) {
+  const out = $("ph-out"), go = $("ph-go"), n = photoQueue.length;
+  go.disabled = true;
+  out.innerHTML = `<p class="hint" id="ph-status">Claude schaut sich ${n === 1 ? "das Foto" : `die ${n} Fotos`} an, das dauert ein paar Sekunden …</p>`;
+  let res;
+  try {
+    const images = await Promise.all(photoQueue.map(q => shrink(q.file)));
+    res = await askClaude(kind, images);
+  } catch (e) {
+    const msg = e.status === 401 ? "Der API-Schlüssel stimmt nicht. Prüf ihn unter „Ziele“."
+      : e.status === 400 && /credit|balance/i.test(e.message) ? "Dein Guthaben bei Anthropic ist aufgebraucht. Lade auf console.anthropic.com etwas nach."
+      : e.status === 429 || e.status === 529 ? "Claude ist gerade ausgelastet. Versuch es in einer Minute noch mal."
+      : e.status === "refusal" ? "Claude konnte diese Fotos nicht auswerten. Versuch andere Fotos."
+      : "Der Scan hat nicht geklappt. Prüf dein Internet und versuch es noch mal.";
+    $("ph-status").textContent = msg;
+    go.disabled = false;
+    return;
+  }
+  go.disabled = false;
+  photoQueue.forEach(q => URL.revokeObjectURL(q.url)); photoQueue = [];
+  $("thumbs").innerHTML = ""; go.hidden = true;
+  if (kind === "meal") showMealResult(meal, res); else showPackResult(meal, res);
+}
+
+function showMealResult(meal, res) {
+  const out = $("ph-out");
+  const items = (res.items || []).filter(i => i && i.name);
+  if (!items.length) { out.innerHTML = `<p class="hint">${esc(res.note || "Kein Essen erkannt.")}</p>`; return; }
+  const per = items.map(i => { const g = Math.max(1, +i.grams || 100);
+    return { name: String(i.name), g, unit: i.unit === "ml" ? "ml" : "g", kcal: (+i.kcal || 0) / g * 100, c: (+i.c || 0) / g * 100, p: (+i.p || 0) / g * 100, f: (+i.f || 0) / g * 100 }; });
+  out.innerHTML = `<div class="picked">
+    ${res.note ? `<p class="hint">${esc(res.note)}</p>` : ""}
+    <ul class="scanlist">${per.map((i, n) => `<li>
+      <label class="chk"><input type="checkbox" id="sc-on-${n}" checked> <b>${esc(i.name)}</b></label>
+      <div class="amt">${amountField("sc-g-" + n, i.unit, i.g, "")}</div>
+      <span class="num" id="sc-k-${n}"></span></li>`).join("")}</ul>
+    <div class="calc num" id="sc-total"></div>
+    <button class="primary" type="button" id="sc-add">Zu ${meal.name} hinzufügen</button></div>`;
+  const vals = () => per.map((i, n) => ({ ...i, on: $("sc-on-" + n).checked, grams: Math.max(0, parseFloat($("sc-g-" + n).value) || 0) }));
+  const upd = () => {
+    const t = { kcal: 0, c: 0, p: 0, f: 0 };
+    vals().forEach((i, n) => { const k = i.grams / 100; $("sc-k-" + n).textContent = `${fmt(i.kcal * k)} kcal`;
+      if (i.on) for (const key in t) t[key] += i[key] * k; });
+    $("sc-total").innerHTML = `<span><b>${fmt(t.kcal)} kcal</b></span><span>K ${fmt(t.c, 1)} g</span><span>E ${fmt(t.p, 1)} g</span><span>F ${fmt(t.f, 1)} g</span>`;
+  };
+  per.forEach((_, n) => { bindAmount("sc-g-" + n, upd); $("sc-on-" + n).onchange = upd; }); upd();
+  $("sc-add").onclick = () => {
+    const v = vals().filter(i => i.on && i.grams > 0);
+    for (const i of v) { const k = i.grams / 100;
+      day.meals[meal.id].push({ name: i.name + " (Foto)", grams: i.grams, unit: i.unit, kcal: Math.round(i.kcal * k),
+        c: +(i.c * k).toFixed(1), p: +(i.p * k).toFixed(1), f: +(i.f * k).toFixed(1), per: { kcal: i.kcal, c: i.c, p: i.p, f: i.f } }); }
+    save(keyFor(current), day); render();
+    out.innerHTML = `<div class="result-box">${v.length} ${v.length === 1 ? "Eintrag" : "Einträge"} zu ${meal.name} hinzugefügt. Du kannst sie später antippen und die Menge ändern.</div>`;
+  };
+}
+
+function showPackResult(meal, res) {
+  const out = $("ph-out");
+  const prods = (res.products || []).filter(p => p && p.name).map(r => ({
+    name: String(r.name), unit: r.unit === "ml" ? "ml" : "g", kcal: Math.round(+r.kcal || 0), c: +r.c || 0, p: +r.p || 0, f: +r.f || 0,
+    portions: r.portion > 0 ? [["1 Portion", Math.round(r.portion)]] : [], off: true, fromLabel: r.fromLabel }));
+  if (!prods.length) { out.innerHTML = `<p class="hint">${esc(res.note || "Nichts erkannt.")} Fotografier am besten die Nährwerttabelle.</p>`; return; }
+  out.innerHTML = `${res.note ? `<p class="hint">${esc(res.note)}</p>` : ""}
+    <p class="hint">Tipp ein Produkt an, um die Menge zu wählen:</p>
+    <ul class="results">${prods.map((f, i) => `<li><button type="button" data-p="${i}"><span>${esc(f.name)} <small>· ${f.fromLabel ? "vom Etikett" : "geschätzt"}</small></span><small class="num">${fmt(f.kcal)} kcal / 100 ${f.unit}</small></button></li>`).join("")}</ul>
+    <div id="picked"></div>`;
+  out.querySelectorAll("[data-p]").forEach(b => b.onclick = () => showPick(meal, prods[+b.dataset.p], $("picked")));
 }
 
 // ---- Barcode-Scanner ----
@@ -549,6 +751,8 @@ function openGoals() {
       <label class="f" for="g-p">Eiweiß (g)<input id="g-p" type="number" min="0" value="${settings.p}"></label>
       <label class="f" for="g-f">Fett (g)<input id="g-f" type="number" min="0" value="${settings.f}"></label>
     </div>
+    <label class="f" for="g-key">Claude API-Schlüssel für den Foto-Scan<input id="g-key" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(settings.apiKey || "")}"></label>
+    <p class="hint">Bleibt nur auf diesem Handy. Einen Schlüssel bekommst du auf console.anthropic.com unter „API Keys“.</p>
     <button class="primary" type="button" id="g-save">Ziele speichern</button>
     <h3 style="font-size:17px;margin-top:6px">Bedarf berechnen</h3>
     <p class="hint">Grundumsatz nach Mifflin-St Jeor mal Aktivitätsfaktor. Danach kannst du die Werte oben übernehmen.</p>
@@ -587,7 +791,9 @@ function openGoals() {
   calc();
   $("bk-out").onclick = () => {
     const data = {};
-    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith("kb:")) data[k] = localStorage.getItem(k); } } catch {}
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith("kb:") && k !== "kb:offcache") data[k] = localStorage.getItem(k); } } catch {}
+    // Den API-Schlüssel nicht in die Sicherungsdatei schreiben
+    try { const s = JSON.parse(data["kb:settings"] || "{}"); delete s.apiKey; data["kb:settings"] = JSON.stringify(s); } catch {}
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
     a.download = "kalorienbuch-sicherung-" + keyFor(new Date()).slice(4) + ".json";
@@ -609,7 +815,7 @@ function openGoals() {
   $("b-use").onclick = () => { for (const k of ["kcal", "c", "p", "f"]) $("g-" + k).value = rec[k]; };
   $("g-save").onclick = () => {
     settings = { ...settings, kcal: +$("g-kcal").value || settings.kcal, c: +$("g-c").value || 0, p: +$("g-p").value || 0, f: +$("g-f").value || 0,
-      water: Math.min(24, Math.max(1, +$("g-water").value || 14)), creatine: Math.max(1, +$("g-creatine").value || 6),
+      water: Math.min(24, Math.max(1, +$("g-water").value || 14)), creatine: Math.max(1, +$("g-creatine").value || 6), apiKey: $("g-key").value.trim(),
       sex: $("b-sex").value, age: +$("b-age").value, weight: +$("b-w").value, height: +$("b-h").value };
     save("settings", settings); render(); closeSheet();
   };
