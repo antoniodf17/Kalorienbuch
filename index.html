@@ -38,6 +38,14 @@
     <span class="streak num" id="streak"></span>
   </label>
 
+  <section class="weigh" aria-label="Gewicht">
+    <span class="box" id="weigh-box" aria-hidden="true"></span>
+    <div class="ctext"><b id="weigh-title">Heute abwiegen</b><span id="weigh-sub">Morgens nüchtern, nach dem Klo</span></div>
+    <label class="kg" for="weight"><input id="weight" type="number" inputmode="decimal" step="0.1" min="30" max="250" placeholder="kg" aria-label="Gewicht in kg"><span>kg</span></label>
+  </section>
+
+  <section class="review" id="review" aria-label="Wochenanalyse" hidden></section>
+
   <section class="summary" aria-label="Tagesübersicht">
     <div class="ringrow">
       <div class="side"><b class="num" id="eaten">0</b><small>Gegessen</small></div>

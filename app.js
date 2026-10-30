@@ -71,7 +71,7 @@ const MEALS = [
   { id: "snacks", name: "Snacks", hint: "Empfohlen ~10 %", share: 0.10 },
 ];
 
-const DEFAULT_SETTINGS = { kcal: 2100, c: 230, p: 160, f: 60, water: 14, weight: 78, creatine: 6, custom: [] };
+const DEFAULT_SETTINGS = { kcal: 2200, c: 255, p: 160, f: 60, water: 14, weight: 78, creatine: 6, custom: [] };
 
 // ---- Speicher: alles bleibt auf diesem Gerät ----
 const local = {
@@ -137,6 +137,20 @@ function render() {
     save(keyFor(current), day); render();
   };
 
+  // Gewicht: täglicher Eintrag, Wochenschnitt im Vergleich zur Vorwoche
+  const wIn = $("weight");
+  if (document.activeElement !== wIn) wIn.value = day.weight || "";
+  $("weigh-box").classList.toggle("done", !!day.weight);
+  $("weigh-title").textContent = day.weight ? "Abgewogen" : "Heute abwiegen";
+  $("weigh-sub").textContent = weightTrend() || "Morgens nüchtern, nach dem Klo";
+  wIn.onchange = () => {
+    const v = parseFloat(String(wIn.value).replace(",", "."));
+    day.weight = v >= 30 && v <= 250 ? Math.round(v * 10) / 10 : undefined;
+    save(keyFor(current), day); render();
+  };
+
+  renderReview();
+
   // Wasser (1 Glas = 250 ml)
   const g = $("glasses"); g.innerHTML = "";
   for (let i = 0; i < settings.water; i++) {
@@ -172,6 +186,98 @@ function render() {
     wrap.appendChild(sec);
   }
 }
+
+function weightTrend() {
+  // Durchschnitt der letzten 7 Tage (bis zum angezeigten Tag) gegen die 7 Tage davor
+  const avg = from => {
+    const vals = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(current); d.setDate(d.getDate() - from - i);
+      const rec = from === 0 && i === 0 ? day : local.get(keyFor(d));
+      if (rec && rec.weight) vals.push(rec.weight);
+    }
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  };
+  const now = avg(0), before = avg(7);
+  if (now == null) return "";
+  let s = `Ø 7 Tage ${fmt(now, 1)} kg`;
+  if (before != null) {
+    const diff = now - before;
+    const tag = diff <= -0.3 && diff >= -0.6 ? " · im Ziel" : diff > -0.3 ? " · zu langsam" : " · zu schnell";
+    s += ` · ${diff > 0 ? "+" : diff < 0 ? "−" : "±"}${fmt(Math.abs(diff), 1)} kg zur Vorwoche${tag}`;
+  }
+  return s;
+}
+
+// ---- Wochenanalyse: echten Bedarf aus gegessenen kcal und Gewichtsverlauf schätzen ----
+const KCAL_PER_KG = 7700;      // Energie in 1 kg Körperfett
+const TARGET_LOSS = 0.45;      // kg pro Woche, Mitte von 0,3–0,6
+function weeklyReview() {
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const days = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const rec = keyFor(d) === keyFor(current) ? day : local.get(keyFor(d));
+    const kcal = rec && rec.meals ? Object.values(rec.meals).flat().reduce((s, e) => s + (e.kcal || 0), 0) : 0;
+    days.push({ weight: rec && rec.weight, kcal });
+  }
+  const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  const w1 = days.slice(0, 7).map(d => d.weight).filter(Boolean), w0 = days.slice(7).map(d => d.weight).filter(Boolean);
+  // Heute zählt nicht mit, weil der Tag noch nicht vorbei ist; Tage unter 800 kcal gelten als nicht vollständig eingetragen
+  const eaten = days.slice(1, 8).map(d => d.kcal).filter(k => k >= 800);
+  const missing = [];
+  if (w1.length < 3) missing.push(`noch ${3 - w1.length}× abwiegen diese Woche`);
+  if (w0.length < 3) missing.push("Gewicht aus der Vorwoche fehlt");
+  if (eaten.length < 5) missing.push(`noch ${5 - eaten.length} vollständig eingetragene Tage`);
+  if (missing.length) return { ready: false, missing };
+  const change = mean(w1) - mean(w0);                 // kg pro Woche (negativ = abgenommen)
+  const intake = mean(eaten);
+  const tdee = intake - change * KCAL_PER_KG / 7;     // tatsächlicher Tagesbedarf
+  let goal = tdee - TARGET_LOSS * KCAL_PER_KG / 7;
+  goal = Math.max(settings.kcal - 200, Math.min(settings.kcal + 200, goal)); // höchstens ±200 kcal pro Woche
+  goal = Math.max(1500, Math.round(goal / 50) * 50);
+  return { ready: true, change, intake, tdee, goal };
+}
+
+function renderReview() {
+  const box = $("review");
+  const today = keyFor(new Date()) === keyFor(current);
+  const due = !settings.lastReview || Date.now() - settings.lastReview > 6.5 * 864e5;
+  const isWeekend = [0, 6].includes(new Date().getDay());
+  const hiddenToday = settings.reviewHidden === keyFor(new Date());
+  if (!today || !(reviewOpen || (due && isWeekend && !hiddenToday))) { box.hidden = true; return; }
+  const r = weeklyReview();
+  box.hidden = false;
+  if (!r.ready) {
+    box.innerHTML = `<b>Wochenanalyse</b><p class="hint">Für eine sichere Auswertung fehlt noch: ${r.missing.join(", ")}.</p>
+      <button class="ghost" type="button" id="rv-close">Schließen</button>`;
+    $("rv-close").onclick = () => { reviewOpen = false; settings.reviewHidden = keyFor(new Date()); save("settings", settings); render(); };
+    return;
+  }
+  const loss = -r.change, same = r.goal === settings.kcal;
+  const verdict = loss >= 0.3 && loss <= 0.6 ? "Genau im Zielbereich von 0,3–0,6 kg pro Woche."
+    : loss < 0.3 ? "Etwas langsamer als geplant (Ziel 0,3–0,6 kg pro Woche)." : "Schneller als geplant. Zu schnell kostet Muskeln.";
+  box.innerHTML = `<b>Wochenanalyse</b>
+    <div class="rv-grid num">
+      <span>Gewicht</span><b>${loss >= 0 ? "−" : "+"}${fmt(Math.abs(r.change), 1)} kg</b>
+      <span>Ø gegessen</span><b>${fmt(r.intake)} kcal</b>
+      <span>Dein Bedarf</span><b>ca. ${fmt(Math.round(r.tdee / 10) * 10)} kcal</b>
+    </div>
+    <p class="hint">${verdict} ${same ? `Dein Ziel von ${fmt(settings.kcal)} kcal passt, bleib dabei.` : `Neues Ziel: <b>${fmt(r.goal)} kcal</b> statt ${fmt(settings.kcal)} kcal.`}</p>
+    <div class="grid2">
+      ${same ? `<button class="primary" type="button" id="rv-ok">Alles klar</button>` : `<button class="primary" type="button" id="rv-apply">${fmt(r.goal)} kcal übernehmen</button>`}
+      <button class="ghost" type="button" id="rv-later">${same ? "Schließen" : "Behalten"}</button>
+    </div>`;
+  const done = () => { settings.lastReview = Date.now(); reviewOpen = false; save("settings", settings); render(); };
+  if ($("rv-apply")) $("rv-apply").onclick = () => {
+    settings.kcal = r.goal;
+    settings.c = Math.max(0, Math.round((r.goal - settings.p * 4 - settings.f * 9) / 4));
+    done();
+  };
+  if ($("rv-ok")) $("rv-ok").onclick = done;
+  $("rv-later").onclick = done;
+}
+let reviewOpen = false;
 
 async function loadDay() {
   const k = keyFor(current);
@@ -756,6 +862,7 @@ function openGoals() {
     <label class="f" for="g-key">Claude API-Schlüssel für den Foto-Scan<input id="g-key" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(settings.apiKey || "")}"></label>
     <p class="hint">Bleibt nur auf diesem Handy. Einen Schlüssel bekommst du auf console.anthropic.com unter „API Keys“.</p>
     <button class="primary" type="button" id="g-save">Ziele speichern</button>
+    <button class="ghost" type="button" id="g-review">Wochenanalyse jetzt anzeigen</button>
     <h3 style="font-size:17px;margin-top:6px">Bedarf berechnen</h3>
     <p class="hint">Grundumsatz nach Mifflin-St Jeor mal Aktivitätsfaktor. Danach kannst du die Werte oben übernehmen.</p>
     <div class="grid2">
@@ -814,6 +921,7 @@ function openGoals() {
       msg.textContent = `Sicherung geladen (${keys.length} Einträge).`;
     } catch { msg.textContent = "Diese Datei ist keine Kalorienbuch-Sicherung."; }
   };
+  $("g-review").onclick = () => { reviewOpen = true; closeSheet(); render(); scrollTo({ top: 0, behavior: "smooth" }); };
   $("b-use").onclick = () => { for (const k of ["kcal", "c", "p", "f"]) $("g-" + k).value = rec[k]; };
   $("g-save").onclick = () => {
     settings = { ...settings, kcal: +$("g-kcal").value || settings.kcal, c: +$("g-c").value || 0, p: +$("g-p").value || 0, f: +$("g-f").value || 0,
@@ -828,6 +936,8 @@ $("btn-goal").onclick = openGoals;
 settings = { ...DEFAULT_SETTINGS, ...(local.get("settings") || {}) };
 // Einmalig: Wasserziel wegen Kreatin auf 3,5 l (14 Gläser) anheben
 if ((settings.v || 1) < 2) { if (settings.water < 14) settings.water = 14; settings.v = 2; save("settings", settings); }
+// Einmalig: Start mit 2200 kcal (Kohlenhydrate füllen den Rest nach Eiweiß und Fett auf)
+if (settings.v < 3) { settings.kcal = 2200; settings.c = Math.max(0, Math.round((2200 - settings.p * 4 - settings.f * 9) / 4)); settings.v = 3; save("settings", settings); }
 loadDay();
 $("store-note").textContent = "Deine Einträge werden auf diesem Handy gespeichert. Produktdaten von Open Food Facts (ODbL).";
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
