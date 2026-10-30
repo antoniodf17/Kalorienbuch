@@ -143,10 +143,11 @@ function render() {
         <button class="add" type="button" aria-label="Zu ${m.name} hinzufügen">+</button>
       </div>
       <ul class="entries">${list.map((e, i) => `
-        <li><div class="name"><b>${esc(e.name)}</b><span class="num">${fmt(e.grams)} ${unitOf(e)} · K ${fmt(e.c)} · E ${fmt(e.p)} · F ${fmt(e.f)}</span></div>
-        <span class="kcal num">${fmt(e.kcal)} kcal</span>
+        <li><button class="entry" type="button" data-e="${i}" aria-label="${esc(e.name)} bearbeiten"><span class="name"><b>${esc(e.name)}</b><span class="num">${fmt(e.grams)} ${unitOf(e)} · K ${fmt(e.c)} · E ${fmt(e.p)} · F ${fmt(e.f)}</span></span>
+        <span class="kcal num">${fmt(e.kcal)} kcal</span></button>
         <button class="del" type="button" data-i="${i}" aria-label="${esc(e.name)} entfernen">×</button></li>`).join("")}</ul>`;
     sec.querySelector(".add").onclick = () => openAdd(m);
+    sec.querySelectorAll(".entry").forEach(btn => btn.onclick = () => openEdit(m, +btn.dataset.e));
     sec.querySelectorAll(".del").forEach(btn => btn.onclick = () => {
       list.splice(+btn.dataset.i, 1); save(keyFor(current), day); render();
     });
@@ -193,6 +194,48 @@ function openAdd(meal) {
   draw();
 }
 
+// ---- Eintrag nachträglich ändern ----
+function perOf(e) {
+  if (e.per) return e.per;
+  const g = e.grams || 1; // ältere Einträge: Werte je 100 aus der gespeicherten Menge zurückrechnen
+  return { kcal: e.kcal / g * 100, c: e.c / g * 100, p: e.p / g * 100, f: e.f / g * 100 };
+}
+function openEdit(meal, i) {
+  const e = day.meals[meal.id][i]; if (!e) return;
+  const per = perOf(e), u = unitOf(e);
+  bg.hidden = false;
+  sheet.innerHTML = `
+    <div class="sheet-head"><h3 id="sheet-title">Eintrag ändern</h3><button class="iconbtn" type="button" id="x">Abbrechen</button></div>
+    <div class="picked">
+      <b>${esc(e.name)}</b>
+      <p class="hint num">je 100 ${u}: ${fmt(per.kcal)} kcal · K ${fmt(per.c, 1)} · E ${fmt(per.p, 1)} · F ${fmt(per.f, 1)}</p>
+      <div class="chips">${[0.5, 1.5, 2].map(x => `<button type="button" data-x="${x}">${x === 0.5 ? "Hälfte" : "×" + fmt(x, 1)}</button>`).join("")}</div>
+      ${amountField("grams", u, e.grams)}
+      <div class="calc num" id="calc"></div>
+      <label class="f" for="ed-meal">Mahlzeit<select id="ed-meal">${MEALS.map(m => `<option value="${m.id}"${m.id === meal.id ? " selected" : ""}>${m.name}</option>`).join("")}</select></label>
+      <button class="primary" type="button" id="ed-save">Speichern</button>
+      <button class="ghost" type="button" id="ed-del">Eintrag löschen</button>
+    </div>`;
+  const grams = $("grams"), base = e.grams;
+  const upd = () => {
+    const k = Math.max(0, parseFloat(grams.value) || 0) / 100;
+    $("calc").innerHTML = `<span><b>${fmt(per.kcal * k)} kcal</b></span><span>K ${fmt(per.c * k, 1)} g</span><span>E ${fmt(per.p * k, 1)} g</span><span>F ${fmt(per.f * k, 1)} g</span>`;
+  };
+  sheet.querySelectorAll("[data-x]").forEach(b => b.onclick = () => { setAmount("grams", Math.round(base * +b.dataset.x)); upd(); });
+  bindAmount("grams", upd); upd();
+  $("x").onclick = closeSheet;
+  $("ed-del").onclick = () => { day.meals[meal.id].splice(i, 1); save(keyFor(current), day); render(); closeSheet(); };
+  $("ed-save").onclick = () => {
+    const g = parseFloat(grams.value) || 0; if (g <= 0) { grams.focus(); return; }
+    const k = g / 100;
+    const upd = { ...e, grams: g, per, kcal: Math.round(per.kcal * k), c: +(per.c * k).toFixed(1), p: +(per.p * k).toFixed(1), f: +(per.f * k).toFixed(1) };
+    const target = $("ed-meal").value;
+    if (target === meal.id) day.meals[meal.id][i] = upd;
+    else { day.meals[meal.id].splice(i, 1); day.meals[target].push(upd); }
+    save(keyFor(current), day); render(); closeSheet();
+  };
+}
+
 // ---- Mengenfeld: Gramm-Eingabe, bei Getränken zusätzlich ml-Leiste ----
 const unitOf = x => (x && x.unit === "ml") ? "ml" : "g";
 function amountField(id, unit, value, label = "Menge") {
@@ -230,13 +273,13 @@ function offToFood(p) {
     portions: serving > 0 ? [["1 Portion", Math.round(serving)]] : [], off: true };
 }
 
-async function offSearch(term, signal) {
-  const url = "https://world.openfoodfacts.org/cgi/search.pl?action=process&json=1&search_simple=1&sort_by=unique_scans_n&lc=de&cc=de&page_size=25&search_terms=" +
+async function offSearch(term, signal, page = 1) {
+  const url = "https://world.openfoodfacts.org/cgi/search.pl?action=process&json=1&search_simple=1&sort_by=unique_scans_n&lc=de&cc=de&page_size=30&page=" + page + "&search_terms=" +
     encodeURIComponent(term) + "&fields=" + OFF_FIELDS;
   const r = await fetch(url, { signal });
   if (!r.ok) throw new Error("search " + r.status);
   const d = await r.json();
-  return (d.products || []).map(offToFood).filter(Boolean);
+  return { foods: (d.products || []).map(offToFood).filter(Boolean), total: +d.count || 0 };
 }
 
 async function offBarcode(code) {
@@ -333,7 +376,8 @@ function showPick(meal, f, box, onAdded) {
   $("addit").onclick = () => {
     const g = parseFloat(grams.value) || 0; if (g <= 0) { grams.focus(); return; }
     const k = g / 100;
-    day.meals[meal.id].push({ name: f.name, grams: g, unit: u, kcal: Math.round(f.kcal * k), c: +(f.c * k).toFixed(1), p: +(f.p * k).toFixed(1), f: +(f.f * k).toFixed(1) });
+    day.meals[meal.id].push({ name: f.name, grams: g, unit: u, kcal: Math.round(f.kcal * k), c: +(f.c * k).toFixed(1), p: +(f.p * k).toFixed(1), f: +(f.f * k).toFixed(1),
+      per: { kcal: f.kcal, c: f.c, p: f.p, f: f.f } });
     save(keyFor(current), day);
     remember(f);
     render();
@@ -357,7 +401,8 @@ function drawSearch(meal) {
     <div id="picked"></div>
     <ul class="results" id="res"></ul>
     <p class="hint" id="off-status" hidden></p>
-    <ul class="results" id="res-off"></ul>`;
+    <ul class="results" id="res-off"></ul>
+    <button class="ghost" type="button" id="more" hidden>Mehr Produkte laden</button>`;
   const q = $("q"), res = $("res"), resOff = $("res-off"), offStatus = $("off-status");
   const norm = s => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/ß/g, "ss");
   const row = (f, attr, i) => `<li><button type="button" ${attr}="${i}"><span>${esc(f.name)}${f.mine ? " <small>· gespeichert</small>" : ""}</span><small class="num">${fmt(f.kcal)} kcal / 100 ${unitOf(f)}</small></button></li>`;
@@ -369,19 +414,20 @@ function drawSearch(meal) {
     lastTerm = term;
     const words = term.split(/\s+/).filter(Boolean);
     hits = [];
-    for (const it of index) { if (words.every(w => it.key.includes(w))) { hits.push(it.f); if (hits.length >= (term ? 15 : 12)) break; } }
+    for (const it of index) { if (words.every(w => it.key.includes(w))) { hits.push(it.f); if (hits.length >= (term ? 40 : 12)) break; } }
     res.innerHTML = hits.map((f, i) => row(f, "data-i", i)).join("");
     // Open Food Facts erst nach einer kurzen Tipp-Pause fragen
     clearTimeout(offTimer); if (ctl) ctl.abort();
-    resOff.innerHTML = ""; offHits = [];
+    resOff.innerHTML = ""; offHits = []; offPage = 1; more.hidden = true;
     if (raw.length < 3) { offStatus.hidden = !raw || hits.length > 0; offStatus.textContent = "Tipp mindestens 3 Buchstaben, um alle Produkte zu durchsuchen."; return; }
     offStatus.hidden = false; offStatus.textContent = "Suche in Open Food Facts …";
     offTimer = setTimeout(async () => {
       ctl = new AbortController();
       try {
-        const found = await offSearch(raw, ctl.signal);
+        const { foods: found, total } = await offSearch(raw, ctl.signal);
         const seen = new Set(hits.map(h => h.code || h.name));
         offHits = found.filter(f => !seen.has(f.code) && !seen.has(f.name));
+        offTotal = total; more.hidden = total <= 30;
         offStatus.textContent = offHits.length ? "Aus Open Food Facts:" : (hits.length ? "" : "Nichts gefunden. Scan den Barcode oder leg es unter „Eigenes“ an.");
         offStatus.hidden = !offStatus.textContent;
         resOff.innerHTML = offHits.map((f, i) => row(f, "data-o", i)).join("");
@@ -391,7 +437,21 @@ function drawSearch(meal) {
       }
     }, 450);
   };
-  const box = $("picked");
+  const box = $("picked"), more = $("more");
+  let offPage = 1, offTotal = 0;
+  more.onclick = async () => {
+    more.disabled = true; more.textContent = "Lädt …";
+    try {
+      const { foods } = await offSearch(q.value.trim(), undefined, offPage + 1);
+      offPage++;
+      const seen = new Set([...hits, ...offHits].map(h => h.code || h.name));
+      const start = offHits.length;
+      offHits.push(...foods.filter(f => !seen.has(f.code) && !seen.has(f.name)));
+      resOff.insertAdjacentHTML("beforeend", offHits.slice(start).map((f, i) => row(f, "data-o", start + i)).join(""));
+      more.hidden = offPage * 30 >= offTotal || !foods.length;
+    } catch { offStatus.textContent = "Konnte nicht mehr laden. Prüf dein Internet."; }
+    more.disabled = false; more.textContent = "Mehr Produkte laden";
+  };
   res.onclick = e => { const b = e.target.closest("[data-i]"); if (b) showPick(meal, hits[+b.dataset.i], box, reset); };
   resOff.onclick = e => { const b = e.target.closest("[data-o]"); if (b) showPick(meal, offHits[+b.dataset.o], box, reset); };
   const reset = () => { q.value = ""; lastTerm = null; list(); };

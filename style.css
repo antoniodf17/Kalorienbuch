@@ -87,7 +87,9 @@ header.top h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .add { color: #0F1512; } }
 .entries { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .entries:empty { display: none; }
-.entries li { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.entries li { display: flex; align-items: center; gap: 4px; padding: 0 10px 0 0; border-bottom: 1px solid var(--line); }
+.entry { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 10px 6px 10px 16px; border: none; background: none; text-align: left; }
+.entry:active { background: var(--surface-2); }
 .entries li:last-child { border-bottom: none; }
 .entries .name { flex: 1; min-width: 0; }
 .entries .name b { font-weight: 600; display: block; overflow-wrap: anywhere; }
