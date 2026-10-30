@@ -144,7 +144,7 @@ function render() {
       </div>
       <ul class="entries">${list.map((e, i) => `
         <li><button class="entry" type="button" data-e="${i}" aria-label="${esc(e.name)} bearbeiten"><span class="name"><b>${esc(e.name)}</b><span class="num">${fmt(e.grams)} ${unitOf(e)} · K ${fmt(e.c)} · E ${fmt(e.p)} · F ${fmt(e.f)}</span></span>
-        <span class="kcal num">${fmt(e.kcal)} kcal</span></button>
+        <span class="kcal num">${fmt(e.kcal)} kcal</span><span class="edit" aria-hidden="true">Ändern</span></button>
         <button class="del" type="button" data-i="${i}" aria-label="${esc(e.name)} entfernen">×</button></li>`).join("")}</ul>`;
     sec.querySelector(".add").onclick = () => openAdd(m);
     sec.querySelectorAll(".entry").forEach(btn => btn.onclick = () => openEdit(m, +btn.dataset.e));

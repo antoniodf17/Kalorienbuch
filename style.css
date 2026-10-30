@@ -157,3 +157,4 @@ label.f { display: flex; flex-direction: column; gap: 5px; font-size: 13px; colo
 .ghost.narrow { width: auto; padding: 10px 16px; }
 .filebtn { display: flex; align-items: center; justify-content: center; cursor: pointer; text-align: center; }
 
+.entry .edit { font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 4px 9px; flex: none; }
