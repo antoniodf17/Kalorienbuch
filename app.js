@@ -71,7 +71,7 @@ const MEALS = [
   { id: "snacks", name: "Snacks", hint: "Empfohlen ~10 %", share: 0.10 },
 ];
 
-const DEFAULT_SETTINGS = { kcal: 2100, c: 230, p: 160, f: 60, water: 10, weight: 78, custom: [] };
+const DEFAULT_SETTINGS = { kcal: 2100, c: 230, p: 160, f: 60, water: 14, weight: 78, creatine: 6, custom: [] };
 
 // ---- Speicher: alles bleibt auf diesem Gerät ----
 const local = {
@@ -118,6 +118,24 @@ function render() {
     $("bar-" + k).style.width = Math.min(100, t[k] / (settings[k] || 1) * 100) + "%";
     $("txt-" + k).textContent = `${fmt(t[k])} / ${fmt(settings[k])} g`;
   }
+
+  // Kreatin: täglicher Haken plus Serie der Tage am Stück
+  const cr = $("creatine");
+  cr.checked = !!day.creatine;
+  $("creatine-sub").textContent = day.creatine && day.creatineAt ? `${settings.creatine} g · abgehakt um ${day.creatineAt} Uhr` : `${settings.creatine} g täglich`;
+  let streak = 0;
+  for (let d = new Date(current), i = 0; i < 400; i++, d.setDate(d.getDate() - 1)) {
+    const rec = i === 0 ? day : local.get(keyFor(d));
+    if (rec && rec.creatine) streak++;
+    else if (i === 0) continue; // heute noch offen: Serie bis gestern zählen
+    else break;
+  }
+  $("streak").textContent = streak > 1 ? `${streak} Tage am Stück` : "";
+  cr.onchange = () => {
+    day.creatine = cr.checked;
+    day.creatineAt = cr.checked ? new Date().toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "";
+    save(keyFor(current), day); render();
+  };
 
   // Wasser (1 Glas = 250 ml)
   const g = $("glasses"); g.innerHTML = "";
@@ -525,7 +543,8 @@ function openGoals() {
     <div class="sheet-head"><h3 id="sheet-title">Deine Ziele</h3><button class="iconbtn" type="button" id="x">Schließen</button></div>
     <div class="grid2">
       <label class="f" for="g-kcal">Kalorien pro Tag<input id="g-kcal" type="number" min="800" value="${settings.kcal}"></label>
-      <label class="f" for="g-water">Wasser (Gläser à 250 ml)<input id="g-water" type="number" min="1" max="20" value="${settings.water}"></label>
+      <label class="f" for="g-water">Wasser (Gläser à 250 ml)<input id="g-water" type="number" min="1" max="24" value="${settings.water}"></label>
+      <label class="f" for="g-creatine">Kreatin pro Tag (g)<input id="g-creatine" type="number" min="1" max="20" value="${settings.creatine}"></label>
       <label class="f" for="g-c">Kohlenhydrate (g)<input id="g-c" type="number" min="0" value="${settings.c}"></label>
       <label class="f" for="g-p">Eiweiß (g)<input id="g-p" type="number" min="0" value="${settings.p}"></label>
       <label class="f" for="g-f">Fett (g)<input id="g-f" type="number" min="0" value="${settings.f}"></label>
@@ -590,7 +609,7 @@ function openGoals() {
   $("b-use").onclick = () => { for (const k of ["kcal", "c", "p", "f"]) $("g-" + k).value = rec[k]; };
   $("g-save").onclick = () => {
     settings = { ...settings, kcal: +$("g-kcal").value || settings.kcal, c: +$("g-c").value || 0, p: +$("g-p").value || 0, f: +$("g-f").value || 0,
-      water: Math.min(20, Math.max(1, +$("g-water").value || 8)),
+      water: Math.min(24, Math.max(1, +$("g-water").value || 14)), creatine: Math.max(1, +$("g-creatine").value || 6),
       sex: $("b-sex").value, age: +$("b-age").value, weight: +$("b-w").value, height: +$("b-h").value };
     save("settings", settings); render(); closeSheet();
   };
@@ -599,6 +618,8 @@ $("btn-goal").onclick = openGoals;
 
 // ---- Start ----
 settings = { ...DEFAULT_SETTINGS, ...(local.get("settings") || {}) };
+// Einmalig: Wasserziel wegen Kreatin auf 3,5 l (14 Gläser) anheben
+if ((settings.v || 1) < 2) { if (settings.water < 14) settings.water = 14; settings.v = 2; save("settings", settings); }
 loadDay();
 $("store-note").textContent = "Deine Einträge werden auf diesem Handy gespeichert. Produktdaten von Open Food Facts (ODbL).";
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
