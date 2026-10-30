@@ -355,9 +355,9 @@ function remember(food) {
 const PHOTO_MAX = 6;
 let photoQueue = []; // { file, url }
 
-async function shrink(file) {
+async function shrink(file, px = 1280) {
   const img = await createImageBitmap(file);
-  const s = Math.min(1, 1568 / Math.max(img.width, img.height));
+  const s = Math.min(1, px / Math.max(img.width, img.height));
   const cv = document.createElement("canvas");
   cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
   cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
@@ -365,6 +365,13 @@ async function shrink(file) {
 }
 
 const NUM = { type: "number" };
+// Drei Stufen: der Nutzer wählt pro Scan zwischen Preis und Genauigkeit
+const PHOTO_LEVELS = {
+  spar: { label: "Sparsam", cost: "unter 0,1 Cent", model: "claude-haiku-5-5", effort: "medium", px: 1092 },
+  normal: { label: "Normal", cost: "ca. 2–3 Cent", model: "claude-opus-5-5", effort: "low", px: 1280 },
+  genau: { label: "Genau", cost: "ca. 5–8 Cent", model: "claude-opus-5-5", effort: "high", px: 1568 },
+};
+const photoLevel = () => PHOTO_LEVELS[settings.photoLevel] || PHOTO_LEVELS.normal;
 const PHOTO_TASKS = {
   meal: {
     prompt: n => `Du bist Ernährungsberater. Du bekommst ${n} Foto${n > 1 ? "s" : ""} von Essen oder Getränken, die zusammen eine Mahlzeit ergeben.
@@ -389,21 +396,21 @@ Lies für jedes Produkt die Nährwerte je 100 g (bei Getränken je 100 ml, dann 
 };
 
 async function askClaude(kind, images) {
-  const task = PHOTO_TASKS[kind];
+  const task = PHOTO_TASKS[kind], lvl = photoLevel(), opus = lvl.model.startsWith("claude-opus");
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-api-key": settings.apiKey,
       "anthropic-version": "2026-10-21",
-      "anthropic-beta": "server-side-fallback-2026-07-01",
+      ...(opus ? { "anthropic-beta": "server-side-fallback-2026-07-01" } : {}),
       "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify({
-      model: "claude-opus-5-5",
+      model: lvl.model,
       max_tokens: 16000,
-      fallbacks: "default",
-      output_config: { effort: "high", format: { type: "json_schema", schema: task.schema } },
+      ...(opus ? { fallbacks: "default" } : {}),
+      output_config: { effort: lvl.effort, format: { type: "json_schema", schema: task.schema } },
       messages: [{ role: "user", content: [
         ...images.map(data => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data } })),
         { type: "text", text: task.prompt(images.length) },
@@ -439,6 +446,8 @@ function drawPhoto(meal, openGoalsTab) {
       <button role="tab" type="button" data-k="pack" aria-selected="false">Packungen</button>
     </div>
     <p class="hint" id="photo-hint"></p>
+    <div class="chips" role="radiogroup" aria-label="Genauigkeit">${Object.entries(PHOTO_LEVELS).map(([k, l]) =>
+      `<button type="button" role="radio" data-l="${k}" aria-checked="${photoLevel() === l}">${l.label} · ${l.cost}</button>`).join("")}</div>
     <div class="grid2">
       <label class="scanbtn" for="ph-cam"><b>Foto machen</b><span>Öffnet die Kamera</span>
         <input id="ph-cam" type="file" accept="image/*" capture="environment" hidden></label>
@@ -454,6 +463,10 @@ function drawPhoto(meal, openGoalsTab) {
       ? `Bis zu ${PHOTO_MAX} Fotos von einer Mahlzeit, z. B. Teller von oben und von der Seite. Claude schätzt Mengen und Nährwerte.`
       : `Bis zu ${PHOTO_MAX} Fotos von Packungen. Am besten die Nährwerttabelle fotografieren.`;
   };
+  body.querySelectorAll("[data-l]").forEach(b => b.onclick = () => {
+    settings.photoLevel = b.dataset.l; save("settings", settings);
+    body.querySelectorAll("[data-l]").forEach(x => x.setAttribute("aria-checked", x === b));
+  });
   body.querySelectorAll("[data-k]").forEach(b => b.onclick = () => {
     kind = b.dataset.k;
     body.querySelectorAll("[data-k]").forEach(x => x.setAttribute("aria-selected", x === b));
@@ -488,7 +501,7 @@ async function runPhoto(meal, kind) {
   out.innerHTML = `<p class="hint" id="ph-status">Claude schaut sich ${n === 1 ? "das Foto" : `die ${n} Fotos`} an, das dauert ein paar Sekunden …</p>`;
   let res;
   try {
-    const images = await Promise.all(photoQueue.map(q => shrink(q.file)));
+    const images = await Promise.all(photoQueue.map(q => shrink(q.file, photoLevel().px)));
     res = await askClaude(kind, images);
   } catch (e) {
     const msg = e.status === 401 ? "Der API-Schlüssel stimmt nicht. Prüf ihn unter „Ziele“."

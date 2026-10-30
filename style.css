@@ -173,3 +173,4 @@ label.f { display: flex; flex-direction: column; gap: 5px; font-size: 13px; colo
 .glasses { display: grid; grid-template-columns: repeat(7, 22px); gap: 6px 8px; }
 .steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .linkout { display: block; text-align: center; color: var(--fg); text-decoration: none; }
+.chips button[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
