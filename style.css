@@ -188,3 +188,5 @@ label.f { display: flex; flex-direction: column; gap: 5px; font-size: 13px; colo
 .rv-grid { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 14px; }
 .rv-grid span { color: var(--muted); }
 .review .hint { margin: 0; color: var(--fg); }
+.review .linkbtn { align-self: center; }
+.export-text { width: 100%; font: 13px/1.4 ui-monospace, monospace; border-radius: 10px; border: 1px solid var(--line); padding: 8px; background: var(--surface); color: var(--fg); }
