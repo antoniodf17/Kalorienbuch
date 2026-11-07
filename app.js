@@ -885,6 +885,82 @@ function drawCustom(meal, done) {
   };
 }
 
+// ---- Einträge von Claude übernehmen ----
+// Format (JSON, darf auch in Text eingebettet sein):
+// {"kalorienbuch":1,"datum":"2026-11-07","eintraege":[{"mahlzeit":"fruehstueck","name":"…","menge":420,"einheit":"g","kcal":800,"eiweiss":30,"fett":30,"kh":105}]}
+// datum optional (sonst angezeigter Tag), mahlzeit: fruehstueck | mittag | abend | snacks, einheit g oder ml.
+const MEAL_ALIAS = { fruehstueck: "fruehstueck", "frühstück": "fruehstueck", breakfast: "fruehstueck", mittag: "mittag", mittagessen: "mittag", lunch: "mittag",
+  abend: "abend", abendessen: "abend", dinner: "abend", snack: "snacks", snacks: "snacks" };
+function parseClaudeImport(text) {
+  const a = text.indexOf("{"), b = text.lastIndexOf("}");
+  if (a < 0 || b < a) throw new Error("Kein Datenblock gefunden.");
+  const data = JSON.parse(text.slice(a, b + 1).replace(/[“”„]/g, '"'));
+  const list = data.eintraege || data.items || data.entries;
+  if (!Array.isArray(list) || !list.length) throw new Error("Der Block enthält keine Einträge.");
+  let date = null;
+  if (data.datum || data.date) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(data.datum || data.date).trim());
+    if (!m) throw new Error("Datum bitte als JJJJ-MM-TT.");
+    date = new Date(+m[1], +m[2] - 1, +m[3], 12);
+  }
+  const num = v => { const n = parseFloat(String(v ?? 0).replace(",", ".")); return isFinite(n) && n >= 0 ? n : 0; };
+  const items = list.map(it => {
+    const meal = MEAL_ALIAS[String(it.mahlzeit || it.meal || "snacks").toLowerCase().trim()] || "snacks";
+    const grams = num(it.menge ?? it.grams ?? it.g) || 100;
+    const unit = String(it.einheit || it.unit || "g").toLowerCase() === "ml" ? "ml" : "g";
+    const kcal = Math.round(num(it.kcal)), p = num(it.eiweiss ?? it.protein ?? it.p), f = num(it.fett ?? it.fat ?? it.f), c = num(it.kh ?? it.kohlenhydrate ?? it.carbs ?? it.c);
+    const per = x => +(x * 100 / grams).toFixed(3);
+    return { meal, entry: { name: String(it.name || "Eintrag").slice(0, 80), grams, unit, kcal, c: +c.toFixed(1), p: +p.toFixed(1), f: +f.toFixed(1),
+      per: { kcal: per(kcal), c: per(c), p: per(p), f: per(f) }, src: "claude" } };
+  });
+  return { date, items };
+}
+function openImport() {
+  bg.hidden = false; fitSheet();
+  sheet.innerHTML = `
+    <div class="sheet-head"><h3 id="sheet-title">Von Claude einfügen</h3><button class="iconbtn" type="button" id="x">Schließen</button></div>
+    <p class="hint">Kopiere den Block, den Claude dir im Chat gibt, und füge ihn hier ein.</p>
+    <button class="primary" type="button" id="im-paste">Aus Zwischenablage einfügen</button>
+    <textarea id="im-text" class="export-text" rows="6" placeholder="Oder hier einfügen…" aria-label="Block von Claude"></textarea>
+    <div id="im-prev"></div>
+    <button class="primary" type="button" id="im-go" hidden>Eintragen</button>`;
+  $("x").onclick = closeSheet;
+  const ta = $("im-text"), prev = $("im-prev"), go = $("im-go");
+  let parsed = null;
+  const show = () => {
+    go.hidden = true; parsed = null;
+    if (!ta.value.trim()) { prev.innerHTML = ""; return; }
+    try { parsed = parseClaudeImport(ta.value); }
+    catch (e) { prev.innerHTML = `<p class="hint">${esc(e.message.startsWith("Unexpected") || e.message.includes("JSON") ? "Der Block ist unvollständig. Bitte komplett kopieren." : e.message)}</p>`; return; }
+    const d = parsed.date || current;
+    const sum = totals(parsed.items.map(i => i.entry));
+    prev.innerHTML = `<div class="result-box num"><b>${d.toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" })}</b><br>
+      ${parsed.items.map(i => `${esc(i.entry.name)} · ${fmt(i.entry.grams)} ${i.entry.unit} · ${fmt(i.entry.kcal)} kcal <span style="color:var(--muted)">(${MEALS.find(m => m.id === i.meal).name})</span>`).join("<br>")}
+      <br><b>Zusammen ${fmt(sum.kcal)} kcal · E ${fmt(sum.p)} g · F ${fmt(sum.f)} g · K ${fmt(sum.c)} g</b></div>`;
+    go.hidden = false; go.textContent = `${parsed.items.length} ${parsed.items.length === 1 ? "Eintrag" : "Einträge"} eintragen`;
+  };
+  ta.oninput = show;
+  $("im-paste").onclick = async () => {
+    try { ta.value = await navigator.clipboard.readText(); show(); }
+    catch { ta.focus(); prev.innerHTML = `<p class="hint">Kein Zugriff auf die Zwischenablage. Tipp ins Feld und wähle „Einsetzen“.</p>`; }
+  };
+  go.onclick = async () => {
+    if (!parsed) return;
+    const d = parsed.date || current, k = keyFor(d);
+    const sameDay = k === keyFor(current);
+    const rec = sameDay ? day : { ...emptyDay(), ...(await load(k) || {}) };
+    rec.meals ||= emptyDay().meals;
+    const sig = JSON.stringify(parsed.items);
+    rec.imports ||= [];
+    if (rec.imports.includes(sig) && !confirm("Diesen Block hast du schon eingetragen. Trotzdem nochmal eintragen?")) return;
+    for (const { meal, entry } of parsed.items) (rec.meals[meal] ||= []).push(entry);
+    rec.imports.push(sig);
+    save(k, rec);
+    if (!sameDay) { current = new Date(d); await loadDay(); } else render();
+    closeSheet();
+  };
+}
+
 function openGoals() {
   bg.hidden = false; fitSheet();
   sheet.innerHTML = `
@@ -902,7 +978,10 @@ function openGoals() {
     <button class="primary" type="button" id="g-save">Ziele speichern</button>
     <p class="hint">Dein Plan: Eiweiß 150–170 g, Fett mindestens 60 g, der Rest Kohlenhydrate. Die Kohlenhydrate rechnen sich beim Ändern von kcal, Eiweiß oder Fett selbst aus.</p>
     <button class="ghost" type="button" id="g-review">Gewichts-Check jetzt anzeigen</button>
-    <button class="ghost" type="button" id="g-copy">Daten für Claude kopieren</button>
+    <div class="grid2">
+      <button class="ghost" type="button" id="g-copy">Daten für Claude kopieren</button>
+      <button class="ghost" type="button" id="g-import">Von Claude einfügen</button>
+    </div>
     <h3 style="font-size:17px;margin-top:6px">Bedarf berechnen</h3>
     <p class="hint">Grundumsatz nach Mifflin-St Jeor mal Aktivitätsfaktor. Danach kannst du die Werte oben übernehmen.</p>
     <div class="grid2">
@@ -962,6 +1041,7 @@ function openGoals() {
     } catch { msg.textContent = "Diese Datei ist keine Kalorienbuch-Sicherung."; }
   };
   $("g-copy").onclick = e => copyForClaude(e.target);
+  $("g-import").onclick = openImport;
   sheet.querySelectorAll("#g-kcal,#g-p,#g-f").forEach(el => el.oninput = () => {
     $("g-c").value = Math.max(0, Math.round(((+$("g-kcal").value || 0) - (+$("g-p").value || 0) * 4 - (+$("g-f").value || 0) * 9) / 4));
   });
@@ -993,6 +1073,7 @@ if (settings.v < 4) {
   settings.v = 4; save("settings", settings);
 }
 loadDay();
+$("btn-import").onclick = openImport;
 $("store-note").textContent = "Deine Einträge werden auf diesem Handy gespeichert. Produktdaten von Open Food Facts (ODbL).";
 try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
 if ("serviceWorker" in navigator) {
