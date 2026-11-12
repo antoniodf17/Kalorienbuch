@@ -93,6 +93,9 @@ const NF = {};
 const fmt = (n, d = 0) => (NF[d] ||= new Intl.NumberFormat("de-DE", { maximumFractionDigits: d, minimumFractionDigits: d })).format(Number(n) || 0);
 const esc = s => String(s).replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 
+// Aktivitäts-Bonus (z. B. viele Schritte): erhöht das kcal-Ziel nur für diesen Tag, die Extra-kcal gehen in die Kohlenhydrate
+const bonusOf = rec => (rec && Array.isArray(rec.activity) ? rec.activity : []).reduce((s, a) => s + (a.kcal || 0), 0);
+const dayGoal = rec => settings.kcal + bonusOf(rec);
 function totals(list) {
   return list.reduce((t, e) => ({ kcal: t.kcal + e.kcal, c: t.c + e.c, p: t.p + e.p, f: t.f + e.f }), { kcal: 0, c: 0, p: 0, f: 0 });
 }
@@ -105,18 +108,25 @@ function render() {
 
   const all = MEALS.flatMap(m => day.meals[m.id] || []);
   const t = totals(all);
-  const left = settings.kcal - t.kcal;
+  const bonus = bonusOf(day), goalK = settings.kcal + bonus;
+  const goalM = { c: settings.c + Math.round(bonus / 4), p: settings.p, f: settings.f };
+  const left = goalK - t.kcal;
   $("eaten").textContent = fmt(t.kcal);
-  $("goal-kcal").textContent = fmt(settings.kcal);
+  $("goal-kcal").textContent = fmt(goalK);
+  const act = $("activity");
+  act.hidden = !bonus;
+  act.innerHTML = bonus ? `<div class="act-head"><b>Aktivität +${fmt(bonus)} kcal</b><span>Ziel heute ${fmt(settings.kcal)} + ${fmt(bonus)}</span></div>` +
+    day.activity.map((a, i) => `<div class="act-row"><span>${esc(a.name)}</span><span class="num">+${fmt(a.kcal)} kcal</span><button class="del" type="button" data-a="${i}" aria-label="${esc(a.name)} entfernen">×</button></div>`).join("") : "";
+  act.querySelectorAll("[data-a]").forEach(b => b.onclick = () => { day.activity.splice(+b.dataset.a, 1); save(keyFor(current), day); render(); });
   $("left").textContent = fmt(Math.abs(left));
   $("left-label").textContent = left >= 0 ? "kcal übrig" : "kcal zu viel";
   $("ring-center").classList.toggle("over", left < 0);
-  const ratio = Math.min(t.kcal / (settings.kcal || 1), 1);
+  const ratio = Math.min(t.kcal / (goalK || 1), 1);
   $("ring-arc").style.strokeDashoffset = 326.7 * (1 - ratio);
   $("ring-arc").setAttribute("stroke", left < 0 ? "var(--over)" : "var(--accent)");
   for (const k of ["c", "p", "f"]) {
-    $("bar-" + k).style.width = Math.min(100, t[k] / (settings[k] || 1) * 100) + "%";
-    $("txt-" + k).textContent = `${fmt(t[k])} / ${fmt(settings[k])} g`;
+    $("bar-" + k).style.width = Math.min(100, t[k] / (goalM[k] || 1) * 100) + "%";
+    $("txt-" + k).textContent = `${fmt(t[k])} / ${fmt(goalM[k])} g`;
   }
 
   // Kreatin: täglicher Haken plus Serie der Tage am Stück
@@ -166,7 +176,7 @@ function render() {
   for (const m of MEALS) {
     const list = day.meals[m.id] || [];
     const mt = totals(list);
-    const target = Math.round(settings.kcal * m.share);
+    const target = Math.round(goalK * m.share);
     const sec = document.createElement("section");
     sec.className = "meal";
     sec.innerHTML = `
@@ -221,12 +231,14 @@ function weeklyReview() {
   const since = Math.floor((Date.now() - reviewSince()) / 864e5);
   const span = Math.max(REVIEW_DAYS, Math.min(REVIEW_MAX, since)); // 14–21 Tage zurück
   const days = [];
-  for (let i = 0; i < span; i++) { const d = new Date(today); d.setDate(d.getDate() - i); const rec = dayRec(d); days.push({ weight: rec && rec.weight, kcal: dayKcal(rec) }); }
+  for (let i = 0; i < span; i++) { const d = new Date(today); d.setDate(d.getDate() - i); const rec = dayRec(d); days.push({ weight: rec && rec.weight, kcal: dayKcal(rec), bonus: bonusOf(rec) }); }
   const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
   const last = days.slice(0, 7).map(d => d.weight).filter(Boolean);
   const first = days.slice(span - 7).map(d => d.weight).filter(Boolean);
   // Tage unter 800 kcal gelten als nicht vollständig eingetragen, heute zählt nicht mit
-  const eaten = days.slice(1).map(d => d.kcal).filter(k => k >= 800);
+  const full = days.slice(1).filter(d => d.kcal >= 800);
+  const eaten = full.map(d => d.kcal);
+  const avgBonus = full.length ? full.reduce((s, d) => s + d.bonus, 0) / full.length : 0;
   const missing = [];
   if (last.length < 3) missing.push(`noch ${3 - last.length}× abwiegen in dieser Woche`);
   if (first.length < 3) missing.push(`mehr Gewichtseinträge von vor ${Math.round(span / 7)} Wochen`);
@@ -239,7 +251,7 @@ function weeklyReview() {
   if (loss < 0.3) delta = loss < 0.15 ? -150 : -100;
   else if (loss > 0.6) delta = loss > 0.8 ? 150 : 100;
   // Wenn deutlich mehr gegessen wurde als das Ziel, erst das Ziel einhalten statt es zu senken
-  const overate = delta < 0 && intake != null && intake > settings.kcal + 150;
+  const overate = delta < 0 && intake != null && intake > settings.kcal + avgBonus + 150;
   if (overate) delta = 0;
   const goal = Math.max(1500, settings.kcal + delta);
   return { ready: true, span, avgFirst, avgLast, loss, intake, delta, goal, overate };
@@ -294,14 +306,14 @@ function claudeExport(daysBack = 28) {
   const lines = [`Kalorienbuch-Daten (letzte ${daysBack} Tage, Stand ${today.toLocaleDateString("de-DE")})`,
     `Ziel: ${settings.kcal} kcal · Eiweiß ${settings.p} g · Fett ${settings.f} g · Kohlenhydrate ${settings.c} g`,
     settings.lastReview ? `Letzter Gewichts-Check: ${new Date(settings.lastReview).toLocaleDateString("de-DE")}` : "",
-    "", "Datum | Gewicht | kcal | Eiweiß | Kreatin"].filter(l => l !== null);
+    "", "Datum | Gewicht | kcal | Eiweiß | Kreatin | Aktivität"].filter(l => l !== null);
   for (let i = daysBack - 1; i >= 0; i--) {
     const d = new Date(today); d.setDate(d.getDate() - i);
     const rec = dayRec(d); if (!rec) continue;
     const all = rec.meals ? Object.values(rec.meals).flat() : [];
     const t = totals(all);
-    if (!rec.weight && !all.length) continue;
-    lines.push(`${d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" })} | ${rec.weight ? fmt(rec.weight, 1) + " kg" : "–"} | ${all.length ? fmt(t.kcal) : "–"} | ${all.length ? fmt(t.p) + " g" : "–"} | ${rec.creatine ? "ja" : "–"}`);
+    if (!rec.weight && !all.length && !bonusOf(rec)) continue;
+    lines.push(`${d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" })} | ${rec.weight ? fmt(rec.weight, 1) + " kg" : "–"} | ${all.length ? fmt(t.kcal) : "–"} | ${all.length ? fmt(t.p) + " g" : "–"} | ${rec.creatine ? "ja" : "–"} | ${bonusOf(rec) ? "+" + fmt(bonusOf(rec)) + " kcal" : "–"}`);
   }
   return lines.join("\n");
 }
@@ -895,8 +907,9 @@ function parseClaudeImport(text) {
   const a = text.indexOf("{"), b = text.lastIndexOf("}");
   if (a < 0 || b < a) throw new Error("Kein Datenblock gefunden.");
   const data = JSON.parse(text.slice(a, b + 1).replace(/[“”„]/g, '"'));
-  const list = data.eintraege || data.items || data.entries;
-  if (!Array.isArray(list) || !list.length) throw new Error("Der Block enthält keine Einträge.");
+  const list = data.eintraege || data.items || data.entries || [];
+  const actList = data.aktivitaet || data.aktivität || data.activity || [];
+  if (!Array.isArray(list) || !Array.isArray(actList) || (!list.length && !actList.length)) throw new Error("Der Block enthält keine Einträge.");
   let date = null;
   if (data.datum || data.date) {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(data.datum || data.date).trim());
@@ -913,7 +926,8 @@ function parseClaudeImport(text) {
     return { meal, entry: { name: String(it.name || "Eintrag").slice(0, 80), grams, unit, kcal, c: +c.toFixed(1), p: +p.toFixed(1), f: +f.toFixed(1),
       per: { kcal: per(kcal), c: per(c), p: per(p), f: per(f) }, src: "claude" } };
   });
-  return { date, items };
+  const activity = actList.map(a => ({ name: String(a.name || "Aktivität").slice(0, 60), kcal: Math.min(1500, Math.round(num(a.kcal))) })).filter(a => a.kcal > 0);
+  return { date, items, activity };
 }
 function openImport() {
   bg.hidden = false; fitSheet();
@@ -934,10 +948,12 @@ function openImport() {
     catch (e) { prev.innerHTML = `<p class="hint">${esc(e.message.startsWith("Unexpected") || e.message.includes("JSON") ? "Der Block ist unvollständig. Bitte komplett kopieren." : e.message)}</p>`; return; }
     const d = parsed.date || current;
     const sum = totals(parsed.items.map(i => i.entry));
+    const n = parsed.items.length + parsed.activity.length;
     prev.innerHTML = `<div class="result-box num"><b>${d.toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" })}</b><br>
       ${parsed.items.map(i => `${esc(i.entry.name)} · ${fmt(i.entry.grams)} ${i.entry.unit} · ${fmt(i.entry.kcal)} kcal <span style="color:var(--muted)">(${MEALS.find(m => m.id === i.meal).name})</span>`).join("<br>")}
-      <br><b>Zusammen ${fmt(sum.kcal)} kcal · E ${fmt(sum.p)} g · F ${fmt(sum.f)} g · K ${fmt(sum.c)} g</b></div>`;
-    go.hidden = false; go.textContent = `${parsed.items.length} ${parsed.items.length === 1 ? "Eintrag" : "Einträge"} eintragen`;
+      ${parsed.items.length ? `<br><b>Zusammen ${fmt(sum.kcal)} kcal · E ${fmt(sum.p)} g · F ${fmt(sum.f)} g · K ${fmt(sum.c)} g</b>` : ""}
+      ${parsed.activity.length ? `${parsed.items.length ? "<br>" : ""}${parsed.activity.map(a => `${esc(a.name)} · <b>Ziel +${fmt(a.kcal)} kcal</b>`).join("<br>")}` : ""}</div>`;
+    go.hidden = false; go.textContent = `${n} ${n === 1 ? "Eintrag" : "Einträge"} eintragen`;
   };
   ta.oninput = show;
   $("im-paste").onclick = async () => {
@@ -950,10 +966,11 @@ function openImport() {
     const sameDay = k === keyFor(current);
     const rec = sameDay ? day : { ...emptyDay(), ...(await load(k) || {}) };
     rec.meals ||= emptyDay().meals;
-    const sig = JSON.stringify(parsed.items);
+    const sig = JSON.stringify([parsed.items, parsed.activity]);
     rec.imports ||= [];
     if (rec.imports.includes(sig) && !confirm("Diesen Block hast du schon eingetragen. Trotzdem nochmal eintragen?")) return;
     for (const { meal, entry } of parsed.items) (rec.meals[meal] ||= []).push(entry);
+    if (parsed.activity.length) rec.activity = [...(rec.activity || []), ...parsed.activity];
     rec.imports.push(sig);
     save(k, rec);
     if (!sameDay) { current = new Date(d); await loadDay(); } else render();

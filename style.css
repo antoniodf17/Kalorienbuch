@@ -190,3 +190,9 @@ label.f { display: flex; flex-direction: column; gap: 5px; font-size: 13px; colo
 .review .hint { margin: 0; color: var(--fg); }
 .review .linkbtn { align-self: center; }
 .export-text { width: 100%; font: 13px/1.4 ui-monospace, monospace; border-radius: 10px; border: 1px solid var(--line); padding: 8px; background: var(--surface); color: var(--fg); }
+.activity { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.activity[hidden] { display: none; }
+.act-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.act-head span { color: var(--muted); font-size: 13px; }
+.act-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; }
+.act-row .del { padding: 0 6px; }
